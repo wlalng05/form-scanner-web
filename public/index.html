@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="robots" content="noindex">
+<title>Form Scanner</title>
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --surface: #ffffff;
+    --surface-2: #eef0ec;
+    --ink: #17201d;
+    --ink-2: #55615c;
+    --line: #d9ddd6;
+    --accent: #0f766e;
+    --accent-ink: #ffffff;
+    --accent-soft: #d8efeb;
+    --warn: #a15c07;
+    --warn-soft: #fbeed5;
+    --danger: #b42318;
+    --danger-soft: #fde4e1;
+    --ok: #157f3c;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(20, 30, 25, .06), 0 4px 16px rgba(20, 30, 25, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101513;
+      --surface: #182019;
+      --surface-2: #202a24;
+      --ink: #e8eee9;
+      --ink-2: #9aa8a0;
+      --line: #2c3831;
+      --accent: #2bb3a3;
+      --accent-ink: #062521;
+      --accent-soft: #143a35;
+      --warn: #f0b45a;
+      --warn-soft: #3a2c12;
+      --danger: #f2877b;
+      --danger-soft: #3d1b18;
+      --ok: #5fd08a;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100dvh;
+  }
+  .app { max-width: 560px; margin: 0 auto; padding: 0 16px calc(96px + env(safe-area-inset-bottom)); }
+
+  header {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px;
+    margin: 0 -16px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .brand-mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; }
+  .brand-mark svg { width: 15px; height: 15px; }
+  .event-chip {
+    margin-left: auto; max-width: 60%;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px 6px 12px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+    font: inherit; font-size: 14px; cursor: pointer;
+  }
+  .event-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-chip svg { flex: none; width: 14px; height: 14px; color: var(--ink-2); }
+
+  h1 { font-size: 22px; letter-spacing: -.015em; margin: 24px 0 4px; }
+  .sub { color: var(--ink-2); margin: 0 0 20px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 48px; padding: 0 18px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    font-family: inherit; font-size: 16px; font-weight: 600; line-height: 1;
+    cursor: pointer; text-decoration: none;
+  }
+  .btn svg { width: 20px; height: 20px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.block { width: 100%; }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .btn:focus-visible, .event-chip:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px;
+  }
+
+  /* Capture */
+  .capture { display: grid; gap: 12px; }
+  .capture .hero {
+    display: grid; place-items: center; gap: 10px; text-align: center;
+    padding: 36px 20px; border: 2px dashed var(--line); border-radius: var(--radius);
+    background: var(--surface); color: var(--ink-2);
+  }
+  .capture .hero svg { width: 44px; height: 44px; color: var(--accent); }
+  .tips { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+  .tips li { margin: 2px 0; }
+
+  /* Event picker */
+  .event-list { display: grid; gap: 10px; }
+  .event-option {
+    display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
+    padding: 14px 16px; border-radius: var(--radius); cursor: pointer;
+    background: var(--surface); border: 1px solid var(--line); color: var(--ink); font: inherit;
+  }
+  .event-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .event-option .meta { color: var(--ink-2); font-size: 13px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+
+  /* Working */
+  .working { display: grid; justify-items: center; gap: 16px; padding: 28px 0; text-align: center; }
+  .thumb { width: 100%; max-height: 42vh; object-fit: contain; border-radius: var(--radius); background: var(--surface-2); }
+  .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+  /* Review */
+  .photo-strip { display: flex; gap: 12px; align-items: center; padding: 10px; margin-bottom: 14px; }
+  .photo-strip img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; background: var(--surface-2); cursor: zoom-in; }
+  .photo-strip .meta { font-size: 14px; color: var(--ink-2); }
+  .notice { padding: 12px 14px; border-radius: 12px; font-size: 14px; margin-bottom: 14px; }
+  .notice.warn { background: var(--warn-soft); color: var(--warn); }
+  .notice.error { background: var(--danger-soft); color: var(--danger); }
+  .fields { padding: 4px 16px; }
+  .field { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .field:last-child { border-bottom: 0; }
+  .field label { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .field .req { color: var(--danger); }
+  .field .tag { margin-left: auto; font-weight: 500; }
+  .field input[type=text], .field input[type=email], .field input[type=tel], .field input[type=date], .field select, .field textarea {
+    width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 16px;
+  }
+  .field textarea { min-height: 90px; resize: vertical; }
+  .field.uncertain input, .field.uncertain select, .field.uncertain textarea { border-color: var(--warn); background: var(--warn-soft); }
+  .field.invalid input, .field.invalid select, .field.invalid textarea { border-color: var(--danger); }
+  .field .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
+  .check { display: flex; align-items: center; gap: 10px; min-height: 46px; }
+  .check input { width: 22px; height: 22px; accent-color: var(--accent); }
+
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line);
+  }
+  .actionbar .inner { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+  .actionbar .inner.single { grid-template-columns: 1fr; }
+
+  /* Saved */
+  .done { text-align: center; padding: 32px 0 8px; }
+  .done .tick { width: 64px; height: 64px; margin: 0 auto 8px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--ok); }
+  .done .tick svg { width: 32px; height: 32px; }
+  .summary { text-align: left; padding: 6px 16px; margin-top: 20px; }
+  .summary div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .summary div:last-child { border-bottom: 0; }
+  .summary dt { color: var(--ink-2); }
+  .summary dd { margin: 0; text-align: right; word-break: break-word; font-weight: 600; }
+
+  /* Lightbox */
+  .lightbox { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.92); overflow: auto; display: none; }
+  .lightbox.open { display: block; }
+  .lightbox img { display: block; width: 100%; height: auto; }
+  .lightbox .close { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; min-height: 40px; }
+
+  .footer-note { text-align: center; font-size: 12px; color: var(--ink-2); margin-top: 28px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 12h8"/></svg>
+      </div>
+      Form Scanner
+    </div>
+    <button class="event-chip" id="eventChip" type="button" hidden aria-label="Change event">
+      <span id="eventChipName"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </header>
+
+  <main id="view" aria-live="polite"></main>
+  <p class="footer-note" id="footerNote"></p>
+</div>
+
+<div class="actionbar" id="actionbar" hidden><div class="inner" id="actionbarInner"></div></div>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-label="Form photo">
+  <button class="btn close" id="lightboxClose" type="button">Close</button>
+  <img id="lightboxImg" alt="Full-size photo of the form">
+</div>
+
+<input type="file" id="cameraInput" accept="image/*" capture="environment" class="sr-only" tabindex="-1">
+<input type="file" id="uploadInput" accept="image/*" class="sr-only" tabindex="-1">
+
+<script>
+'use strict';
+
+/* ================= CONFIG ================= */
+const CONFIG = {
+  N8N_BASE: 'https://cmd-systems.app.n8n.cloud',
+  // Optional. Leave empty until Header Auth is turned on in n8n (then set it to the token value).
+  APP_TOKEN: '',
+  MAX_IMAGE_SIDE: 2000,   // px; larger photos are scaled down before upload
+  JPEG_QUALITY: 0.85,
+  DECODE_TIMEOUT_MS: 90000,
+};
+// Add ?test to the URL to call n8n's test webhooks (workflow open in the editor, "Listen for test event").
+const USE_TEST_WEBHOOKS = new URLSearchParams(location.search).has('test');
+/* ========================================== */
+
+const $ = (sel) => document.querySelector(sel);
+const view = $('#view');
+const STORE_KEY = 'fs.selectedEvent';
+
+const state = {
+  events: [],
+  defaultEventId: null,
+  eventId: null,
+  image: null,        // JPEG data URL
+  aiValues: null,     // values as returned by the AI
+  uncertain: [],
+  savedCount: 0,
+};
+
+/* ---------- small helpers ---------- */
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (k === 'html') node.innerHTML = v; // only used with static strings
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+const icon = {
+  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 15v4h14v-4"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 12h6M10 16h6"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+};
+const iconEl = (name) => el('span', { html: icon[name], 'aria-hidden': 'true', style: 'display:contents' });
+
+function storeGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function storeSet(key, v) { try { localStorage.setItem(key, v); } catch { /* storage unavailable */ } }
+
+function currentEvent() { return state.events.find((e) => e.event_id === state.eventId) || null; }
+
+function setActions(...buttons) {
+  const bar = $('#actionbar');
+  const inner = $('#actionbarInner');
+  inner.replaceChildren(...buttons);
+  inner.classList.toggle('single', buttons.length === 1);
+  bar.hidden = buttons.length === 0;
+}
+
+function updateChip() {
+  const ev = currentEvent();
+  $('#eventChip').hidden = !ev || state.events.length === 0;
+  $('#eventChipName').textContent = ev ? ev.event_name : '';
+}
+
+function show(...nodes) {
+  view.replaceChildren(...nodes.flat().filter((n) => n !== null && n !== undefined && n !== false));
+  window.scrollTo({ top: 0 });
+}
+
+/* ---------- API ---------- */
+function hook(path) {
+  return `${CONFIG.N8N_BASE.replace(/\/$/, '')}/${USE_TEST_WEBHOOKS ? 'webhook-test' : 'webhook'}/${path}`;
+}
+
+async function api(path, { method = 'GET', body, timeout = 30000 } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (CONFIG.APP_TOKEN) headers['X-App-Token'] = CONFIG.APP_TOKEN;
+  let res;
+  try {
+    res = await fetch(hook(path), {
+      method, headers, signal: ctrl.signal,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('The server took too long to respond. Please try again.');
+    throw new Error('Could not reach the server. Check your connection and try again.');
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* not JSON */ }
+  if (res.status === 404) throw new Error('Workflow not found (404). Make sure the n8n workflow is published/active.');
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || `Server error (${res.status}).`);
+  if (!data) throw new Error('The server returned an empty response.');
+  if (data.ok === false) throw new Error(data.error || 'Request failed.');
+  return data;
+}
+
+/* ---------- image ---------- */
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, CONFIG.MAX_IMAGE_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', CONFIG.JPEG_QUALITY));
+      } catch (err) {
+        reject(new Error('Could not process that image.'));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('This image format is not supported on this phone. Please use a JPG or PNG photo.'));
+    };
+    img.src = url;
+  });
+}
+
+function openLightbox() {
+  if (!state.image) return;
+  $('#lightboxImg').src = state.image;
+  $('#lightbox').classList.add('open');
+}
+$('#lightboxClose').addEventListener('click', () => $('#lightbox').classList.remove('open'));
+
+/* ---------- screens ---------- */
+function renderLoading(text) {
+  setActions();
+  show(el('div', { class: 'working' }, el('div', { class: 'spinner', role: 'status' }), el('p', { class: 'sub' }, text)));
+}
+
+function renderFatal(message) {
+  setActions();
+  show(
+    el('h1', {}, 'Can’t load events'),
+    el('div', { class: 'notice error' }, message),
+    el('button', { class: 'btn primary block', type: 'button', onclick: init }, 'Try again'),
+  );
+}
+
+function renderEventPicker() {
+  updateChip();
+  const pick = (id) => {
+    state.eventId = id;
+    storeSet(STORE_KEY, id);
+    renderCapture();
+  };
+  if (!state.events.length) {
+    setActions();
+    show(
+      el('h1', {}, 'No events yet'),
+      el('p', { class: 'sub' }, 'Add an event in the Events tab and its fields in the Fields tab of the Google Sheet, then reload.'),
+      el('button', { class: 'btn primary block', type: 'button', onclick: init }, 'Reload'),
+    );
+    return;
+  }
+  setActions(...(state.eventId ? [el('button', { class: 'btn block', type: 'button', onclick: () => renderCapture() }, 'Cancel')] : []));
+  show(
+    el('h1', {}, 'Choose an event'),
+    el('p', { class: 'sub' }, 'Scanned forms are saved to the selected event’s sheet.'),
+    el('div', { class: 'event-list' },
+      state.events.map((e) => el('button', {
+        class: 'event-option', type: 'button',
+        'aria-pressed': String(e.event_id === state.eventId),
+        onclick: () => pick(e.event_id),
+      },
+        el('div', {},
+          el('div', {}, e.event_name),
+          el('div', { class: 'meta' }, `${e.event_id} · ${e.fields.length} field${e.fields.length === 1 ? '' : 's'}`),
+        ),
+        e.event_id === state.defaultEventId ? el('span', { class: 'badge', style: 'margin-left:auto' }, 'Default') : null,
+      )),
+    ),
+  );
+}
+
+function renderCapture(errorMessage) {
+  const ev = currentEvent();
+  if (!ev) return renderEventPicker();
+  updateChip();
+  state.image = null;
+  state.aiValues = null;
+  state.uncertain = [];
+  setActions();
+  show(
+    el('h1', {}, 'Scan a form'),
+    el('p', { class: 'sub' }, `Fields: ${ev.fields.map((f) => f.label).join(', ')}`),
+    errorMessage ? el('div', { class: 'notice error' }, errorMessage) : null,
+    el('div', { class: 'capture' },
+      el('div', { class: 'hero' },
+        iconEl('doc'),
+        el('div', {}, 'Lay the form flat and fill the frame.'),
+      ),
+      el('button', { class: 'btn primary block', type: 'button', onclick: () => $('#cameraInput').click() }, iconEl('camera'), 'Take photo'),
+      el('button', { class: 'btn block', type: 'button', onclick: () => $('#uploadInput').click() }, iconEl('upload'), 'Upload image'),
+      el('ul', { class: 'tips' },
+        el('li', {}, 'Good light, no shadows or glare'),
+        el('li', {}, 'Hold the phone straight above the page'),
+        el('li', {}, 'One form per photo'),
+      ),
+    ),
+  );
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  renderLoading('Preparing photo…');
+  let dataUrl;
+  try {
+    dataUrl = await compressImage(file);
+  } catch (err) {
+    return renderCapture(err.message);
+  }
+  state.image = dataUrl;
+  decode();
+}
+
+async function decode() {
+  const ev = currentEvent();
+  setActions();
+  const status = el('p', { class: 'sub' }, 'Reading the form…');
+  show(el('div', { class: 'working' },
+    el('img', { class: 'thumb', src: state.image, alt: 'Photo of the form' }),
+    el('div', { class: 'spinner', role: 'status' }),
+    status,
+  ));
+  const started = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    status.textContent = s < 15 ? `Reading the form… ${s}s` : `Still reading… ${s}s (handwriting can take a while)`;
+  }, 1000);
+  try {
+    const res = await api('fs-decode', {
+      method: 'POST',
+      timeout: CONFIG.DECODE_TIMEOUT_MS,
+      body: { event_id: ev.event_id, image: state.image, mime: 'image/jpeg' },
+    });
+    state.aiValues = res.values || {};
+    state.uncertain = res.uncertain_fields || [];
+    renderReview();
+  } catch (err) {
+    renderDecodeError(err.message);
+  } finally {
+    clearInterval(tick);
+  }
+}
+
+function renderDecodeError(message) {
+  setActions(
+    el('button', { class: 'btn', type: 'button', onclick: () => renderCapture() }, 'Retake'),
+    el('button', { class: 'btn primary', type: 'button', onclick: decode }, 'Try again'),
+  );
+  show(
+    el('h1', {}, 'Couldn’t read the form'),
+    el('div', { class: 'notice error' }, message),
+    el('img', { class: 'thumb', src: state.image, alt: 'Photo of the form' }),
+    el('p', { class: 'sub', style: 'margin-top:14px' }, 'You can try again with the same photo, or retake it.'),
+    el('button', { class: 'btn block', type: 'button', onclick: () => renderReview(true) }, 'Type the values manually'),
+  );
+}
+
+function buildInput(f, value) {
+  const id = `f_${f.key}`;
+  const common = { id, name: f.key, 'data-key': f.key };
+  switch (f.type) {
+    case 'longtext':
+      return el('textarea', common, value);
+    case 'email':
+      return el('input', { ...common, type: 'email', value, inputmode: 'email', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    case 'phone':
+      return el('input', { ...common, type: 'tel', value, inputmode: 'tel' });
+    case 'number':
+      return el('input', { ...common, type: 'text', value, inputmode: 'decimal' });
+    case 'date':
+      return el('input', { ...common, type: /^\d{4}-\d{2}-\d{2}$/.test(value) || !value ? 'date' : 'text', value });
+    case 'dropdown': {
+      const opts = [...f.options];
+      if (value && !opts.includes(value)) opts.unshift(value);
+      const select = el('select', common,
+        el('option', { value: '' }, '— Select —'),
+        opts.map((o) => el('option', { value: o, selected: o === value }, f.options.includes(o) ? o : `${o} (as read)`)),
+      );
+      return select;
+    }
+    case 'checkbox':
+      return el('div', { class: 'check' },
+        el('input', { ...common, type: 'checkbox', checked: value === 'TRUE' }),
+        el('span', {}, 'Ticked on the form'),
+      );
+    default:
+      return el('input', { ...common, type: 'text', value, autocapitalize: f.key.includes('name') ? 'words' : 'sentences' });
+  }
+}
+
+function readValue(form, f) {
+  const input = form.querySelector(`[data-key="${CSS.escape(f.key)}"]`);
+  if (!input) return '';
+  if (f.type === 'checkbox') return input.checked ? 'TRUE' : 'FALSE';
+  return input.value.trim();
+}
+
+function validate(form, fields) {
+  let firstBad = null;
+  for (const f of fields) {
+    const wrap = form.querySelector(`[data-field="${CSS.escape(f.key)}"]`);
+    const v = readValue(form, f);
+    let msg = '';
+    if (f.required && !v) msg = 'Required';
+    else if (f.type === 'email' && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) msg = 'Not a valid email';
+    else if (f.type === 'dropdown' && v && f.options.length && !f.options.includes(v)) msg = 'Pick one of the listed options';
+    wrap.classList.toggle('invalid', !!msg);
+    wrap.querySelector('.err').textContent = msg;
+    wrap.querySelector('.err').hidden = !msg;
+    if (msg && !firstBad) firstBad = wrap;
+  }
+  if (firstBad) {
+    firstBad.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const input = firstBad.querySelector('input, select, textarea');
+    if (input) input.focus({ preventScroll: true });
+  }
+  return !firstBad;
+}
+
+function renderReview(manual = false) {
+  const ev = currentEvent();
+  const values = manual ? {} : (state.aiValues || {});
+  if (manual) { state.aiValues = null; state.uncertain = []; }
+  const uncertain = new Set(state.uncertain);
+
+  const form = el('form', { class: 'card fields', novalidate: true, onsubmit: (e) => { e.preventDefault(); save(form, ev); } },
+    el('button', { type: 'submit', hidden: true, tabindex: '-1' }),
+    ev.fields.map((f) => {
+      const v = values[f.key] ?? '';
+      const flag = uncertain.has(f.key);
+      const wrap = el('div', { class: `field${flag ? ' uncertain' : ''}`, 'data-field': f.key },
+        el('label', { for: `f_${f.key}` },
+          f.label, f.required ? el('span', { class: 'req', 'aria-hidden': 'true' }, '*') : null,
+          flag ? el('span', { class: 'badge warn tag' }, 'Check this') : null,
+        ),
+        buildInput(f, v),
+        el('div', { class: 'err', hidden: true }),
+      );
+      wrap.addEventListener('input', () => {
+        wrap.classList.remove('uncertain', 'invalid');
+        const tag = wrap.querySelector('.tag');
+        if (tag) tag.remove();
+        wrap.querySelector('.err').hidden = true;
+      });
+      return wrap;
+    }),
+  );
+
+  const flagged = ev.fields.filter((f) => uncertain.has(f.key)).length;
+  setActions(
+    el('button', { class: 'btn', type: 'button', onclick: () => renderCapture() }, 'Rescan'),
+    el('button', { class: 'btn primary', type: 'button', id: 'saveBtn', onclick: () => save(form, ev) }, 'Save to sheet'),
+  );
+  show(
+    el('h1', {}, manual ? 'Enter the values' : 'Review'),
+    el('p', { class: 'sub' }, manual ? 'Type what is written on the form.' : 'Compare with the photo and fix anything that’s wrong.'),
+    state.image ? el('div', { class: 'card photo-strip' },
+      el('img', { src: state.image, alt: 'Photo of the form, tap to enlarge', onclick: openLightbox }),
+      el('div', {},
+        el('div', {}, ev.event_name),
+        el('div', { class: 'meta' }, 'Tap the photo to zoom'),
+      ),
+    ) : null,
+    flagged ? el('div', { class: 'notice warn' }, `${flagged} field${flagged === 1 ? '' : 's'} need${flagged === 1 ? 's' : ''} a closer look.`) : null,
+    el('div', { id: 'saveError' }),
+    form,
+  );
+}
+
+async function save(form, ev) {
+  if (!validate(form, ev.fields)) return;
+  const values = {};
+  for (const f of ev.fields) values[f.key] = readValue(form, f);
+
+  const btn = $('#saveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  $('#saveError').replaceChildren();
+  try {
+    const res = await api('fs-save', {
+      method: 'POST',
+      body: { event_id: ev.event_id, values, ai_values: state.aiValues },
+    });
+    state.savedCount += 1;
+    renderSaved(ev, res.row || values);
+  } catch (err) {
+    $('#saveError').replaceChildren(el('div', { class: 'notice error' }, `Not saved: ${err.message}`));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    btn.disabled = false;
+    btn.textContent = 'Save to sheet';
+  }
+}
+
+function renderSaved(ev, row) {
+  setActions(el('button', { class: 'btn primary block', type: 'button', onclick: () => renderCapture() }, iconEl('camera'), 'Scan next form'));
+  show(
+    el('div', { class: 'done' },
+      el('div', { class: 'tick' }, iconEl('check')),
+      el('h1', { style: 'margin-top:8px' }, 'Saved'),
+      el('p', { class: 'sub' }, `${state.savedCount} form${state.savedCount === 1 ? '' : 's'} saved this session to ${ev.event_name}.`),
+    ),
+    el('dl', { class: 'card summary' },
+      ev.fields.map((f) => el('div', {}, el('dt', {}, f.label), el('dd', {}, row[f.key] || '—'))),
+    ),
+  );
+}
+
+/* ---------- boot ---------- */
+async function init() {
+  renderLoading('Loading events…');
+  try {
+    const res = await api('fs-events');
+    state.events = res.events || [];
+    state.defaultEventId = res.default_event_id;
+    const saved = storeGet(STORE_KEY);
+    const ids = state.events.map((e) => e.event_id);
+    state.eventId = ids.includes(saved) ? saved : (ids.includes(state.defaultEventId) ? state.defaultEventId : null);
+    if (state.eventId) renderCapture(); else renderEventPicker();
+  } catch (err) {
+    renderFatal(err.message);
+  }
+}
+
+$('#eventChip').addEventListener('click', renderEventPicker);
+for (const id of ['#cameraInput', '#uploadInput']) {
+  $(id).addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // allow picking the same file again
+    handleFile(file);
+  });
+}
+$('#footerNote').textContent = USE_TEST_WEBHOOKS ? 'Test mode: using n8n test webhooks' : '';
+init();
+</script>
+</body>
+</html>
