@@ -1,0 +1,332 @@
+{
+  "name": "FS – Save Record",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fs-save",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://form-scanner-web.cmart-diaz.workers.dev"
+        }
+      },
+      "id": "0104a48b-b158-406c-b262-66fc967cf67a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "22ceb562-b62e-4bf4-b52f-1a992a99864a"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Events",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "8b619970-90f9-4d62-a82b-97fc451acbc6",
+      "name": "Read Events",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Fields",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "d9dd888c-ad9d-4112-815f-2ca62411ed31",
+      "name": "Read Fields",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- Shared helpers (same block in every FS Code node) ----\nconst str = (v) => (v === undefined || v === null) ? '' : String(v).trim();\nconst truthy = (v) => v === true || ['TRUE', 'YES', 'Y', '1'].includes(str(v).toUpperCase());\nconst FIELD_TYPES = ['text', 'longtext', 'email', 'phone', 'number', 'date', 'dropdown', 'checkbox'];\n\nfunction normalizeEvents(rows) {\n  return rows\n    .filter((r) => str(r.event_id))\n    .map((r) => ({\n      event_id: str(r.event_id),\n      event_name: str(r.event_name) || str(r.event_id),\n      target_tab: str(r.target_tab) || ('Data_' + str(r.event_id)),\n      is_default: truthy(r.is_default),\n      // a blank \"active\" cell counts as active\n      active: str(r.active) === '' ? true : truthy(r.active),\n    }));\n}\n\nfunction normalizeFields(rows, eventId) {\n  const seen = new Set();\n  return rows\n    .filter((r) => str(r.event_id) === eventId && str(r.field_key))\n    .map((r, i) => {\n      const type = str(r.field_type).toLowerCase();\n      const order = Number(str(r.order));\n      return {\n        key: str(r.field_key),\n        label: str(r.form_label) || str(r.field_key),\n        type: FIELD_TYPES.includes(type) ? type : 'text',\n        required: truthy(r.required),\n        options: str(r.options).split(/[,|]/).map((o) => o.trim()).filter(Boolean),\n        hint: str(r.ai_hint),\n        order: Number.isFinite(order) && str(r.order) !== '' ? order : 1000 + i,\n      };\n    })\n    .sort((a, b) => a.order - b.order)\n    .filter((f) => (seen.has(f.key) ? false : seen.add(f.key)));\n}\n\n// Normalizes a single value to the format that gets stored in the sheet.\nfunction cleanValue(field, value) {\n  let v = str(value);\n  switch (field.type) {\n    case 'email':\n      return v.replace(/\\s+/g, '').toLowerCase();\n    case 'phone':\n      return v.replace(/[^\\d+]/g, '');\n    case 'checkbox':\n      return v === '' ? '' : (truthy(v) || ['CHECKED', 'X', '✓', '✔'].includes(v.toUpperCase()) ? 'TRUE' : 'FALSE');\n    case 'dropdown': {\n      const match = field.options.find((o) => o.toLowerCase() === v.toLowerCase());\n      return match || v;\n    }\n    default:\n      return v;\n  }\n}\n// ---- End shared helpers ----\n\n// Validates the confirmed values and builds the sheet row.\nconst fail = (error) => [{ json: { ok: false, error } }];\n\nconst body = $('Webhook').first().json.body || {};\nconst eventId = str(body.event_id);\nconst values = body.values && typeof body.values === 'object' ? body.values : null;\nconst aiValues = body.ai_values && typeof body.ai_values === 'object' ? body.ai_values : null;\n\nif (!eventId) return fail('No event selected.');\nif (!values) return fail('No values received.');\n\nconst event = normalizeEvents($('Read Events').all().map((i) => i.json)).find((e) => e.event_id === eventId);\nif (!event || !event.active) return fail(`Event ${eventId} was not found or is inactive.`);\n\nconst fields = normalizeFields($('Read Fields').all().map((i) => i.json), eventId);\nif (!fields.length) return fail(`Event ${eventId} has no field mapping.`);\n\nconst row = {\n  timestamp: DateTime.now().setZone('Asia/Manila').toFormat('yyyy-MM-dd HH:mm:ss'),\n  event_id: eventId,\n};\nconst errors = [];\nlet edited = false;\n\nfor (const f of fields) {\n  const v = cleanValue(f, values[f.key]);\n  if (f.required && !v) errors.push(`${f.label} is required.`);\n  if (f.type === 'email' && v && !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v)) errors.push(`${f.label} is not a valid email.`);\n  if (f.type === 'dropdown' && v && f.options.length && !f.options.includes(v)) errors.push(`${f.label} must be one of: ${f.options.join(', ')}.`);\n  if (aiValues && cleanValue(f, aiValues[f.key]) !== v) edited = true;\n  row[f.key] = v;\n}\n\nif (errors.length) return fail(errors.join(' '));\n\nrow.edited = aiValues ? (edited ? 'YES' : 'NO') : '';\n\nreturn [{ json: { ok: true, target_tab: event.target_tab, row } }];\n"
+      },
+      "id": "52cf355c-c3db-4b04-835e-d86a720a25f0",
+      "name": "Build Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "25fd53cc-586d-4417-a3af-b83059284900",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e89a1683-ef1b-46a9-b4e2-a33dac736201",
+      "name": "Row OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: $input.first().json.row }];"
+      },
+      "id": "a0c1bb33-f560-4c87-a30e-9bb000bd2957",
+      "name": "Row Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Build Row').first().json.target_tab }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "190f3cb7-e079-430f-b602-aa63248ae7e1",
+      "name": "Append to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1320,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { ok: true, row: $('Row Only').first().json } }];"
+      },
+      "id": "5cdd6e27-33a6-4f02-95ce-704c5263d124",
+      "name": "Save Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "5a4fe540-5ea5-4c17-ac74-afaa7f84e161",
+      "name": "Respond Saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "29f4a0bb-76da-41b0-81fc-b765439dee7e",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## FS – Save Record\nPOST /webhook/fs-save\nBody: `{ event_id, values, ai_values }`\n\nValidates required fields, adds timestamp (Asia/Manila) and an *edited* flag (YES if the user changed any AI value), then appends a row to the event's **target_tab**.\n\nThe data tab header row must contain: `timestamp`, `event_id`, every `field_key`, and `edited`. Values are written RAW so phone numbers keep their leading 0.",
+        "width": 520,
+        "height": 300
+      },
+      "id": "5ebea7cc-ece7-4977-8b90-1f25aa7da5aa",
+      "name": "Note dbd9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -380
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Events": {
+      "main": [
+        [
+          {
+            "node": "Read Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Fields": {
+      "main": [
+        [
+          {
+            "node": "Build Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Row": {
+      "main": [
+        [
+          {
+            "node": "Row OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row OK?": {
+      "main": [
+        [
+          {
+            "node": "Row Only",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row Only": {
+      "main": [
+        [
+          {
+            "node": "Append to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Sheet": {
+      "main": [
+        [
+          {
+            "node": "Save Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Success": {
+      "main": [
+        [
+          {
+            "node": "Respond Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "saveManualExecutions": true
+  },
+  "pinData": {}
+}

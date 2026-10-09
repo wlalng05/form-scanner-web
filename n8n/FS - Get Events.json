@@ -1,0 +1,171 @@
+{
+  "name": "FS – Get Events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "fs-events",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://form-scanner-web.cmart-diaz.workers.dev"
+        }
+      },
+      "id": "5c299741-637f-4f3e-9100-1f053c0ec231",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "1b5ab5cf-046c-4653-865d-980c80291508"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Events",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "4b9d9550-2584-47b8-a9f7-9fa2eefa69e1",
+      "name": "Read Events",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Fields",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "42d12325-0826-4580-b19a-9a99812d8103",
+      "name": "Read Fields",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- Shared helpers (same block in every FS Code node) ----\nconst str = (v) => (v === undefined || v === null) ? '' : String(v).trim();\nconst truthy = (v) => v === true || ['TRUE', 'YES', 'Y', '1'].includes(str(v).toUpperCase());\nconst FIELD_TYPES = ['text', 'longtext', 'email', 'phone', 'number', 'date', 'dropdown', 'checkbox'];\n\nfunction normalizeEvents(rows) {\n  return rows\n    .filter((r) => str(r.event_id))\n    .map((r) => ({\n      event_id: str(r.event_id),\n      event_name: str(r.event_name) || str(r.event_id),\n      target_tab: str(r.target_tab) || ('Data_' + str(r.event_id)),\n      is_default: truthy(r.is_default),\n      // a blank \"active\" cell counts as active\n      active: str(r.active) === '' ? true : truthy(r.active),\n    }));\n}\n\nfunction normalizeFields(rows, eventId) {\n  const seen = new Set();\n  return rows\n    .filter((r) => str(r.event_id) === eventId && str(r.field_key))\n    .map((r, i) => {\n      const type = str(r.field_type).toLowerCase();\n      const order = Number(str(r.order));\n      return {\n        key: str(r.field_key),\n        label: str(r.form_label) || str(r.field_key),\n        type: FIELD_TYPES.includes(type) ? type : 'text',\n        required: truthy(r.required),\n        options: str(r.options).split(/[,|]/).map((o) => o.trim()).filter(Boolean),\n        hint: str(r.ai_hint),\n        order: Number.isFinite(order) && str(r.order) !== '' ? order : 1000 + i,\n      };\n    })\n    .sort((a, b) => a.order - b.order)\n    .filter((f) => (seen.has(f.key) ? false : seen.add(f.key)));\n}\n\n// Normalizes a single value to the format that gets stored in the sheet.\nfunction cleanValue(field, value) {\n  let v = str(value);\n  switch (field.type) {\n    case 'email':\n      return v.replace(/\\s+/g, '').toLowerCase();\n    case 'phone':\n      return v.replace(/[^\\d+]/g, '');\n    case 'checkbox':\n      return v === '' ? '' : (truthy(v) || ['CHECKED', 'X', '✓', '✔'].includes(v.toUpperCase()) ? 'TRUE' : 'FALSE');\n    case 'dropdown': {\n      const match = field.options.find((o) => o.toLowerCase() === v.toLowerCase());\n      return match || v;\n    }\n    default:\n      return v;\n  }\n}\n// ---- End shared helpers ----\n\n// Builds the event list (with field mappings) for the web app.\nconst eventRows = $('Read Events').all().map((i) => i.json);\nconst fieldRows = $('Read Fields').all().map((i) => i.json);\n\nconst warnings = [];\nconst events = [];\nfor (const e of normalizeEvents(eventRows)) {\n  if (!e.active) continue;\n  const fields = normalizeFields(fieldRows, e.event_id);\n  if (!fields.length) {\n    warnings.push(`Event ${e.event_id} has no rows in the Fields tab, so it is hidden.`);\n    continue;\n  }\n  events.push({\n    event_id: e.event_id,\n    event_name: e.event_name,\n    is_default: e.is_default,\n    fields: fields.map(({ order, ...f }) => f),\n  });\n}\n\nconst def = events.find((e) => e.is_default);\nreturn [{\n  json: {\n    ok: true,\n    events,\n    default_event_id: def ? def.event_id : null,\n    warnings,\n  },\n}];\n"
+      },
+      "id": "c4e13434-6584-4dbc-836f-1f354e85275a",
+      "name": "Build Events Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "a28366f7-5e67-4ab3-9c63-0b70c81a11e8",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## FS – Get Events\nGET /webhook/fs-events\n\nReturns active events from the **Events** tab with their field mappings from the **Fields** tab. Events with no field rows are hidden.",
+        "width": 420,
+        "height": 260
+      },
+      "id": "b4017211-729f-41cc-ab60-9b2b22e4e899",
+      "name": "Note e032",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Events": {
+      "main": [
+        [
+          {
+            "node": "Read Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Fields": {
+      "main": [
+        [
+          {
+            "node": "Build Events Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Events Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "saveManualExecutions": true
+  },
+  "pinData": {}
+}

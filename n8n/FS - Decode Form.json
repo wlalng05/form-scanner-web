@@ -1,0 +1,298 @@
+{
+  "name": "FS – Decode Form",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fs-decode",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://form-scanner-web.cmart-diaz.workers.dev"
+        }
+      },
+      "id": "7cbfda02-e633-406d-80c7-0ba23faaec36",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "de114409-b36a-4146-a13c-886dff7cd811"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Events",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "0dc7b178-747d-4e2e-bcfe-08ff7bc9b137",
+      "name": "Read Events",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "10pttg9Xpkw0qEzcs70qvO70nPi5DmnXVJIlA0SsuWPc",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Fields",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "dc2ffcbe-5766-474b-9ef0-4af4b9a86274",
+      "name": "Read Fields",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- Shared helpers (same block in every FS Code node) ----\nconst str = (v) => (v === undefined || v === null) ? '' : String(v).trim();\nconst truthy = (v) => v === true || ['TRUE', 'YES', 'Y', '1'].includes(str(v).toUpperCase());\nconst FIELD_TYPES = ['text', 'longtext', 'email', 'phone', 'number', 'date', 'dropdown', 'checkbox'];\n\nfunction normalizeEvents(rows) {\n  return rows\n    .filter((r) => str(r.event_id))\n    .map((r) => ({\n      event_id: str(r.event_id),\n      event_name: str(r.event_name) || str(r.event_id),\n      target_tab: str(r.target_tab) || ('Data_' + str(r.event_id)),\n      is_default: truthy(r.is_default),\n      // a blank \"active\" cell counts as active\n      active: str(r.active) === '' ? true : truthy(r.active),\n    }));\n}\n\nfunction normalizeFields(rows, eventId) {\n  const seen = new Set();\n  return rows\n    .filter((r) => str(r.event_id) === eventId && str(r.field_key))\n    .map((r, i) => {\n      const type = str(r.field_type).toLowerCase();\n      const order = Number(str(r.order));\n      return {\n        key: str(r.field_key),\n        label: str(r.form_label) || str(r.field_key),\n        type: FIELD_TYPES.includes(type) ? type : 'text',\n        required: truthy(r.required),\n        options: str(r.options).split(/[,|]/).map((o) => o.trim()).filter(Boolean),\n        hint: str(r.ai_hint),\n        order: Number.isFinite(order) && str(r.order) !== '' ? order : 1000 + i,\n      };\n    })\n    .sort((a, b) => a.order - b.order)\n    .filter((f) => (seen.has(f.key) ? false : seen.add(f.key)));\n}\n\n// Normalizes a single value to the format that gets stored in the sheet.\nfunction cleanValue(field, value) {\n  let v = str(value);\n  switch (field.type) {\n    case 'email':\n      return v.replace(/\\s+/g, '').toLowerCase();\n    case 'phone':\n      return v.replace(/[^\\d+]/g, '');\n    case 'checkbox':\n      return v === '' ? '' : (truthy(v) || ['CHECKED', 'X', '✓', '✔'].includes(v.toUpperCase()) ? 'TRUE' : 'FALSE');\n    case 'dropdown': {\n      const match = field.options.find((o) => o.toLowerCase() === v.toLowerCase());\n      return match || v;\n    }\n    default:\n      return v;\n  }\n}\n// ---- End shared helpers ----\n\n// Validates the upload and builds the Gemini request from the event's field mapping.\n// Change the model here. \"gemini-flash-latest\" always points to Google's current Flash model.\nconst MODEL = 'gemini-flash-latest';\nconst MAX_BASE64_CHARS = 10 * 1024 * 1024; // ~7.5 MB image\n\nconst fail = (error) => [{ json: { ok: false, error } }];\n\nconst body = $('Webhook').first().json.body || {};\nconst eventId = str(body.event_id);\nlet image = str(body.image);\nlet mime = str(body.mime) || 'image/jpeg';\n\nconst dataUrl = image.match(/^data:([^;]+);base64,([\\s\\S]*)$/);\nif (dataUrl) { mime = dataUrl[1]; image = dataUrl[2]; }\nimage = image.replace(/\\s+/g, '');\n\nif (!eventId) return fail('No event selected.');\nif (!image) return fail('No image received.');\nif (image.length > MAX_BASE64_CHARS) return fail('Image is too large. Please retake the photo.');\nif (!/^image\\/(jpeg|png|webp|heic|heif)$/i.test(mime)) return fail(`Unsupported image type: ${mime}`);\n\nconst event = normalizeEvents($('Read Events').all().map((i) => i.json)).find((e) => e.event_id === eventId);\nif (!event || !event.active) return fail(`Event ${eventId} was not found or is inactive.`);\n\nconst fields = normalizeFields($('Read Fields').all().map((i) => i.json), eventId);\nif (!fields.length) return fail(`Event ${eventId} has no field mapping.`);\n\nconst fieldLines = fields.map((f) => {\n  const parts = [`label on the form: \"${f.label}\"`, `type: ${f.type}`];\n  if (f.type === 'dropdown' && f.options.length) parts.push(`allowed values: ${f.options.join(' | ')}`);\n  if (f.type === 'checkbox') parts.push('answer TRUE if ticked/marked, FALSE if not');\n  if (f.type === 'date') parts.push('format YYYY-MM-DD');\n  if (f.hint) parts.push(`hint: ${f.hint}`);\n  return `- ${f.key} (${parts.join('; ')})`;\n}).join('\\n');\n\nconst prompt = [\n  'You are a careful data-entry assistant. The image is a photo of a filled-in paper form.',\n  `Event: ${event.event_name}`,\n  '',\n  'Extract the value written for each field below. Each line gives the JSON key, then the label printed on the form.',\n  fieldLines,\n  '',\n  'Rules:',\n  '- Return only the JSON keys listed above, plus \"uncertain_fields\".',\n  '- Copy what is written. Do not guess, invent, or fill in missing parts.',\n  '- If a field is blank, crossed out, or unreadable, return an empty string \"\".',\n  '- For fields with allowed values, return one of them exactly, or \"\" if none matches.',\n  '- \"uncertain_fields\" must list the keys of any value you are not confident about (e.g. unclear handwriting).',\n].join('\\n');\n\nconst properties = {};\nfor (const f of fields) {\n  properties[f.key] = { type: 'STRING', description: f.label + (f.hint ? ` (${f.hint})` : '') };\n}\nproperties.uncertain_fields = { type: 'ARRAY', items: { type: 'STRING' } };\nconst keys = fields.map((f) => f.key);\n\nreturn [{\n  json: {\n    ok: true,\n    event_id: eventId,\n    model: MODEL,\n    url: `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,\n    fields,\n    request: {\n      contents: [{\n        role: 'user',\n        parts: [\n          { text: prompt },\n          { inlineData: { mimeType: mime, data: image } },\n        ],\n      }],\n      generationConfig: {\n        temperature: 0,\n        responseMimeType: 'application/json',\n        responseSchema: {\n          type: 'OBJECT',\n          properties,\n          required: [...keys, 'uncertain_fields'],\n          propertyOrdering: [...keys, 'uncertain_fields'],\n        },\n      },\n    },\n  },\n}];\n"
+      },
+      "id": "25ca0ea3-cfb1-4f0c-8101-d78ae60c5609",
+      "name": "Build Gemini Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "29ca92ec-8300-468a-bb7e-53a16b6f3ebf",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e643e79a-2f9b-4fe6-a427-b82eb6315575",
+      "name": "Request OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "81e9cd38-d3c5-4604-bd87-17b675278124",
+      "name": "Gemini – Read Form",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ---- Shared helpers (same block in every FS Code node) ----\nconst str = (v) => (v === undefined || v === null) ? '' : String(v).trim();\nconst truthy = (v) => v === true || ['TRUE', 'YES', 'Y', '1'].includes(str(v).toUpperCase());\nconst FIELD_TYPES = ['text', 'longtext', 'email', 'phone', 'number', 'date', 'dropdown', 'checkbox'];\n\nfunction normalizeEvents(rows) {\n  return rows\n    .filter((r) => str(r.event_id))\n    .map((r) => ({\n      event_id: str(r.event_id),\n      event_name: str(r.event_name) || str(r.event_id),\n      target_tab: str(r.target_tab) || ('Data_' + str(r.event_id)),\n      is_default: truthy(r.is_default),\n      // a blank \"active\" cell counts as active\n      active: str(r.active) === '' ? true : truthy(r.active),\n    }));\n}\n\nfunction normalizeFields(rows, eventId) {\n  const seen = new Set();\n  return rows\n    .filter((r) => str(r.event_id) === eventId && str(r.field_key))\n    .map((r, i) => {\n      const type = str(r.field_type).toLowerCase();\n      const order = Number(str(r.order));\n      return {\n        key: str(r.field_key),\n        label: str(r.form_label) || str(r.field_key),\n        type: FIELD_TYPES.includes(type) ? type : 'text',\n        required: truthy(r.required),\n        options: str(r.options).split(/[,|]/).map((o) => o.trim()).filter(Boolean),\n        hint: str(r.ai_hint),\n        order: Number.isFinite(order) && str(r.order) !== '' ? order : 1000 + i,\n      };\n    })\n    .sort((a, b) => a.order - b.order)\n    .filter((f) => (seen.has(f.key) ? false : seen.add(f.key)));\n}\n\n// Normalizes a single value to the format that gets stored in the sheet.\nfunction cleanValue(field, value) {\n  let v = str(value);\n  switch (field.type) {\n    case 'email':\n      return v.replace(/\\s+/g, '').toLowerCase();\n    case 'phone':\n      return v.replace(/[^\\d+]/g, '');\n    case 'checkbox':\n      return v === '' ? '' : (truthy(v) || ['CHECKED', 'X', '✓', '✔'].includes(v.toUpperCase()) ? 'TRUE' : 'FALSE');\n    case 'dropdown': {\n      const match = field.options.find((o) => o.toLowerCase() === v.toLowerCase());\n      return match || v;\n    }\n    default:\n      return v;\n  }\n}\n// ---- End shared helpers ----\n\n// Turns Gemini's reply into clean values for the review form.\nconst built = $('Build Gemini Request').first().json;\nconst fields = built.fields;\nconst res = $input.first().json || {};\n\nconst fail = (error) => [{ json: { ok: false, error } }];\n\nif (res.error) {\n  const e = res.error;\n  const msg = typeof e === 'string' ? e : (e.message || e.description || JSON.stringify(e));\n  return fail('AI request failed: ' + str(msg).slice(0, 300));\n}\n\nconst candidate = (res.candidates || [])[0];\nif (!candidate) {\n  const reason = res.promptFeedback && res.promptFeedback.blockReason;\n  return fail(reason ? `The AI refused the image (${reason}).` : 'The AI returned no result. Please try again.');\n}\n\nconst text = ((candidate.content && candidate.content.parts) || []).map((p) => p.text || '').join('').trim();\nlet raw;\ntry {\n  const cleaned = text.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\n  const start = cleaned.indexOf('{');\n  const end = cleaned.lastIndexOf('}');\n  raw = JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned);\n} catch (err) {\n  return fail('Could not read the AI response. Please try again.');\n}\n\nconst values = {};\nconst uncertain = new Set(\n  (Array.isArray(raw.uncertain_fields) ? raw.uncertain_fields : []).map(str),\n);\n\nfor (const f of fields) {\n  const original = str(raw[f.key]);\n  const v = cleanValue(f, original);\n  values[f.key] = v;\n  if (f.required && !v) uncertain.add(f.key);\n  if (f.type === 'dropdown' && v && f.options.length && !f.options.includes(v)) uncertain.add(f.key);\n  if (f.type === 'email' && v && !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v)) uncertain.add(f.key);\n}\n\nreturn [{\n  json: {\n    ok: true,\n    event_id: built.event_id,\n    values,\n    uncertain_fields: fields.map((f) => f.key).filter((k) => uncertain.has(k)),\n    model: built.model,\n    tokens: (res.usageMetadata && res.usageMetadata.totalTokenCount) || null,\n  },\n}];\n"
+      },
+      "id": "12936a27-fb3f-4b74-9989-5faae1f8ed4c",
+      "name": "Parse AI Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "d3787c7d-9095-4db4-a846-141509c5118e",
+      "name": "Respond Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "aa8d0c7c-c1c3-45c2-b824-d90e25815acc",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## FS – Decode Form\nPOST /webhook/fs-decode\nBody: `{ event_id, image (base64 or data URL), mime }`\n\n1. Loads the event + field mapping from the sheet\n2. Builds a prompt and a strict JSON schema from the mapping\n3. Sends image + prompt to Gemini\n4. Cleans the reply and returns `{ ok, values, uncertain_fields }`\n\n**Change the model** in *Build Gemini Request* (MODEL constant).\n**Credential:** select your Google Gemini credential on *Gemini – Read Form*.",
+        "width": 520,
+        "height": 340
+      },
+      "id": "85891d85-236a-4637-a86e-85fd8ff643d5",
+      "name": "Note c9f7",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -380
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Events": {
+      "main": [
+        [
+          {
+            "node": "Read Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Fields": {
+      "main": [
+        [
+          {
+            "node": "Build Gemini Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini Request": {
+      "main": [
+        [
+          {
+            "node": "Request OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request OK?": {
+      "main": [
+        [
+          {
+            "node": "Gemini – Read Form",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini – Read Form": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Manila",
+    "saveManualExecutions": true
+  },
+  "pinData": {}
+}
